@@ -1,10 +1,11 @@
 # -*- coding: UTF-8 -*-
-import logging
-import traceback
-import MySQLdb
-import pymysql
 import re
 from enum import Enum
+import logging
+import traceback
+import time
+import MySQLdb
+import pymysql
 
 import schemaobject
 import sqlparse
@@ -116,16 +117,70 @@ class MysqlEngine(EngineBase):
 
     @property
     def seconds_behind_master(self):
-        slave_status = self.query(
-            sql="show slave status",
-            close_conn=False,
-            cursorclass=MySQLdb.cursors.DictCursor,
+        server_version = self.server_version
+        if server_version >= (8, 0, 23):
+            primary_stmt, fallback_stmt = "show replica status", "show slave status"
+        else:
+            primary_stmt, fallback_stmt = "show slave status", "show replica status"
+
+        logger.debug(
+            "MySQL version %s detected, primary command: %s",
+            server_version,
+            primary_stmt,
         )
-        return (
-            slave_status.rows[0].get("Seconds_Behind_Master")
-            if slave_status.rows
-            else None
-        )
+
+        def _run(stmt):
+            start = time.perf_counter()
+            result = self.query(
+                sql=stmt,
+                close_conn=False,
+                cursorclass=MySQLdb.cursors.DictCursor,
+            )
+            elapsed = (time.perf_counter() - start) * 1000
+            return result, elapsed
+
+        try:
+            slave_status, elapsed_ms = _run(primary_stmt)
+            if slave_status.error:
+                raise RuntimeError(slave_status.error)
+            logger.debug(
+                "Command %s succeeded in %.2f ms", primary_stmt, elapsed_ms
+            )
+            if slave_status.rows:
+                return slave_status.rows[0].get("Seconds_Behind_Master")
+        except Exception as primary_error:
+            err_text = str(primary_error)
+            if "1064" in err_text or "syntax" in err_text.lower():
+                logger.warning(
+                    "Primary command %s failed with syntax error (%s), falling back to %s",
+                    primary_stmt,
+                    err_text,
+                    fallback_stmt,
+                )
+                try:
+                    slave_status, elapsed_ms = _run(fallback_stmt)
+                    if slave_status.error:
+                        raise RuntimeError(slave_status.error)
+                    logger.debug(
+                        "Fallback command %s succeeded in %.2f ms",
+                        fallback_stmt,
+                        elapsed_ms,
+                    )
+                    if slave_status.rows:
+                        return slave_status.rows[0].get("Seconds_Behind_Master")
+                except Exception as fallback_error:
+                    logger.error(
+                        "Replica status commands failed. Primary(%s): %s; Fallback(%s): %s",
+                        primary_stmt,
+                        err_text,
+                        fallback_stmt,
+                        fallback_error,
+                    )
+            else:
+                logger.error(
+                    "Primary command %s failed: %s", primary_stmt, err_text
+                )
+        return None
 
     @property
     def server_version(self):

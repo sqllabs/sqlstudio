@@ -446,14 +446,36 @@ class TestMysql(TestCase):
         _query.assert_called_once_with(sql="kill 100")
 
     @patch.object(MysqlEngine, "query")
-    def test_seconds_behind_master(self, _query):
+    def test_seconds_behind_master_prefers_show_replica(self, _query):
+        status = ResultSet()
+        status.rows = [{"Seconds_Behind_Master": 5}]
+        _query.return_value = status
         new_engine = MysqlEngine(instance=self.ins1)
-        new_engine.seconds_behind_master
+        new_engine._server_version = (8, 0, 26)
+        value = new_engine.seconds_behind_master
+        self.assertEqual(value, 5)
         _query.assert_called_once_with(
-            sql="show slave status",
+            sql="show replica status",
             close_conn=False,
             cursorclass=MySQLdb.cursors.DictCursor,
         )
+
+    @patch.object(MysqlEngine, "query")
+    def test_seconds_behind_master_fallback_to_slave(self, _query):
+        syntax_error_result = ResultSet()
+        syntax_error_result.error = "You have an error in your SQL syntax (1064)"
+        slave_status = ResultSet()
+        slave_status.rows = [{"Seconds_Behind_Master": 3}]
+        _query.side_effect = [syntax_error_result, slave_status]
+        new_engine = MysqlEngine(instance=self.ins1)
+        new_engine._server_version = (8, 0, 26)
+        value = new_engine.seconds_behind_master
+        self.assertEqual(value, 3)
+        self.assertEqual(_query.call_count, 2)
+        first_call = _query.call_args_list[0]
+        second_call = _query.call_args_list[1]
+        self.assertEqual(first_call.kwargs["sql"], "show replica status")
+        self.assertEqual(second_call.kwargs["sql"], "show slave status")
 
     @patch.object(MysqlEngine, "query")
     def test_processlist(self, _query):

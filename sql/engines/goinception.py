@@ -212,7 +212,7 @@ class GoInceptionEngine(EngineBase):
             raise RuntimeError(f"Inception Error: {query_result.error}")
         if not query_result.rows:
             raise RuntimeError(f"Inception Error: 未获取到语法信息")
-        # 兼容某些异常场景下返回内容为审核结果的问题 https://github.com/sqllabs/sqlstudio/issues/1826
+        # 兼容某些异常场景下返回内容为审核结果的问题 https://github.com/sqllabs/mysqlstudio/issues/1826
         print_info = query_result.to_dict()[0]
         if "error_level" in print_info:
             raise RuntimeError(f'Inception Error: {print_info.get("error_message")}')

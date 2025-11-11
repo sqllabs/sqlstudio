@@ -1,8 +1,8 @@
-# SQL Studio
+# MySQL Studio
 
 ## Overview
 
-SQL Studio is the web front end for SQL Audit.
+MySQL Studio is the web front end for MySQL Audit.
 
 ## License
 

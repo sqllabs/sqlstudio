@@ -254,7 +254,7 @@ class AuditV2:
         review_content = self.workflow.sqlworkflowcontent.review_content
         for review_row in json.loads(review_content):
             review_result = ReviewResult(**review_row)
-            # 去除SQL注释 https://github.com/sqllabs/sqlstudio/issues/949
+            # 去除SQL注释 https://github.com/sqllabs/mysqlstudio/issues/949
             sql = remove_comments(review_result.sql).replace("\n", "").replace("\r", "")
             # 正则匹配
             if p.match(sql):

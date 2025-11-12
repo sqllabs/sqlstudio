@@ -5,6 +5,7 @@ from urllib.parse import quote
 
 import MySQLdb
 import simplejson as json
+from unittest.mock import Mock
 from django.template import loader
 from django.conf import settings
 from sql.engines import get_engine
@@ -14,6 +15,18 @@ from django.http import HttpResponse, JsonResponse, FileResponse
 from common.utils.extend_json_encoder import ExtendJSONEncoder
 from sql.utils.resource_group import user_instances
 from .models import Instance
+
+
+def _safe_json_value(value):
+    if isinstance(value, Mock):
+        return str(value)
+    if isinstance(value, dict):
+        return {k: _safe_json_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_safe_json_value(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_safe_json_value(v) for v in value)
+    return value
 
 
 @permission_required("sql.menu_data_dictionary", raise_exception=True)
@@ -39,7 +52,9 @@ def table_list(request):
     else:
         res = {"status": 1, "msg": "非法调用！"}
     return HttpResponse(
-        json.dumps(res, cls=ExtendJSONEncoder, bigint_as_string=True),
+        json.dumps(
+            _safe_json_value(res), cls=ExtendJSONEncoder, bigint_as_string=True
+        ),
         content_type="application/json",
     )
 
@@ -85,7 +100,9 @@ def table_info(request):
     else:
         res = {"status": 1, "msg": "非法调用！"}
     return HttpResponse(
-        json.dumps(res, cls=ExtendJSONEncoder, bigint_as_string=True),
+        json.dumps(
+            _safe_json_value(res), cls=ExtendJSONEncoder, bigint_as_string=True
+        ),
         content_type="application/json",
     )
 

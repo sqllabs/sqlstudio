@@ -28,6 +28,11 @@ from sql.models import (
 )
 from sql.utils.workflow_audit import AuditException
 
+
+def _get_test_db_name():
+    test_cfg = settings.DATABASES["default"].get("TEST", {})
+    return test_cfg.get("NAME") or settings.DATABASES["default"].get("NAME", "test")
+
 User = Users
 
 
@@ -1131,7 +1136,7 @@ class TestOptimize(TestCase):
         data = {
             "sql_content": "select * from test_archery.sql_users;",
             "instance_name": "test_instance",
-            "db_name": settings.DATABASES["default"]["TEST"]["NAME"],
+            "db_name": _get_test_db_name(),
         }
         data["instance_name"] = "test_instancex"
         r = self.client.post(path="/slowquery/optimize_sqltuning/", data=data)
@@ -1363,7 +1368,7 @@ class TestSQLAnalyze(TestCase):
         self.sys_config.set("soar", "/opt/archery/src/plugins/soar")
         text = "select * from sql_user;select * from sql_workflow;"
         instance_name = self.master.instance_name
-        db_name = settings.DATABASES["default"]["TEST"]["NAME"]
+        db_name = _get_test_db_name()
         r = self.client.post(
             path="/sql_analyze/analyze/",
             data={"text": text, "instance_name": instance_name, "db_name": db_name},
@@ -1387,7 +1392,7 @@ class TestSQLAnalyze(TestCase):
         self.sys_config.set("soar", "/opt/archery/src/plugins/soar")
         text = "/etc/passwd"
         instance_name = self.master.instance_name
-        db_name = settings.DATABASES["default"]["TEST"]["NAME"]
+        db_name = _get_test_db_name()
         r = self.client.post(
             path="/sql_analyze/analyze/",
             data={"text": text, "instance_name": instance_name, "db_name": db_name},
@@ -1803,7 +1808,7 @@ class TestDataDictionary(TestCase):
             user=settings.DATABASES["default"]["USER"],
             password=settings.DATABASES["default"]["PASSWORD"],
         )
-        self.db_name = settings.DATABASES["default"]["TEST"]["NAME"]
+        self.db_name = _get_test_db_name()
 
     def tearDown(self):
         self.sys_config.purge()

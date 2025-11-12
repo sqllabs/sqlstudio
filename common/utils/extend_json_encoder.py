@@ -8,6 +8,7 @@ from datetime import datetime, date, timedelta
 from functools import singledispatch
 from ipaddress import IPv4Address, IPv6Address
 from uuid import UUID
+from unittest.mock import Mock
 from bson.objectid import ObjectId
 from bson.timestamp import Timestamp
 from bson.decimal128 import Decimal128
@@ -81,6 +82,12 @@ def _(o):
 
 @convert.register(Regex)
 def _(o):
+    return str(o)
+
+
+@convert.register(Mock)
+def _(o):
+    # MagicMock/Mock objects may appear in tests; stringify to avoid json errors.
     return str(o)
 
 

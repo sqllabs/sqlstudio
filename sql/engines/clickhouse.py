@@ -268,8 +268,8 @@ class ClickHouseEngine(EngineBase):
                 result = ReviewResult(
                     id=line,
                     errlevel=2,
-                    stagestatus="驳回高危SQL",
-                    errormessage="禁止提交匹配" + critical_ddl_regex + "条件的语句！",
+                    stagestatus="Rejected critical SQL",
+                    errormessage=f"Submitting statements matching {critical_ddl_regex} is forbidden.",
                     sql=statement,
                 )
             # alter语句

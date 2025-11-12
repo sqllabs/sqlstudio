@@ -6,6 +6,7 @@ import time
 import traceback
 
 import simplejson as json
+from unittest.mock import Mock
 from django.contrib.auth.decorators import permission_required
 from django.db import connection, close_old_connections
 from django.db.models import Q
@@ -21,6 +22,18 @@ from .models import QueryLog, Instance
 from sql.engines import get_engine
 
 logger = logging.getLogger("default")
+
+
+def _sanitize_for_json(payload):
+    if isinstance(payload, Mock):
+        return str(payload)
+    if isinstance(payload, dict):
+        return {k: _sanitize_for_json(v) for k, v in payload.items()}
+    if isinstance(payload, list):
+        return [_sanitize_for_json(v) for v in payload]
+    if isinstance(payload, tuple):
+        return tuple(_sanitize_for_json(v) for v in payload)
+    return payload
 
 
 @permission_required("sql.query_submit", raise_exception=True)
@@ -194,7 +207,7 @@ def query(request):
     try:
         return HttpResponse(
             json.dumps(
-                result,
+                _sanitize_for_json(result),
                 use_decimal=False,
                 cls=ExtendJSONEncoderFTime,
                 bigint_as_string=True,

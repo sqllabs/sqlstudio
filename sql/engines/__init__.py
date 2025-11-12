@@ -1,6 +1,7 @@
 """engine base库, 包含一个``EngineBase`` class和一个get_engine函数"""
 
 import importlib
+import logging
 import re
 from sql.engines.models import ResultSet, ReviewSet
 from sql.models import Instance
@@ -215,6 +216,9 @@ class EngineBase:
         return ResultSet()
 
 
+logger = logging.getLogger(__name__)
+
+
 def get_engine_map():
     available_engines = settings.AVAILABLE_ENGINES
     enabled_engines = {}
@@ -223,7 +227,21 @@ def get_engine_map():
         if not config:
             raise ValueError(f"invalid engine {e}, not found in engine map")
         module, o = config["path"].split(":")
-        engine = getattr(importlib.import_module(module), o)
+        try:
+            module_obj = importlib.import_module(module)
+        except ImportError as exc:
+            logger.warning(
+                "Skip loading engine %s because dependency import failed: %s", e, exc
+            )
+            continue
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Skip loading engine %s due to error: %s", e, exc)
+            continue
+        try:
+            engine = getattr(module_obj, o)
+        except AttributeError as exc:
+            logger.warning("Engine %s not found in module %s: %s", e, module, exc)
+            continue
         enabled_engines[e] = engine
     return enabled_engines
 

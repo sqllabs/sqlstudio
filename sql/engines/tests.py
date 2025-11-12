@@ -796,8 +796,8 @@ class TestPgSQL(TestCase):
         row = ReviewResult(
             id=1,
             errlevel=2,
-            stagestatus="驳回高危SQL",
-            errormessage="禁止提交匹配" + "^|update" + "条件的语句！",
+            stagestatus="Rejected critical SQL",
+            errormessage="Submitting statements matching ^|update is forbidden.",
             sql=sql,
         )
         new_engine = PgSQLEngine(instance=self.ins)
@@ -1442,8 +1442,8 @@ class TestOracle(TestCase):
         row = ReviewResult(
             id=1,
             errlevel=2,
-            stagestatus="驳回高危SQL",
-            errormessage="禁止提交匹配" + "^|update" + "条件的语句！",
+            stagestatus="Rejected critical SQL",
+            errormessage="Submitting statements matching ^|update is forbidden.",
             sql=sqlparse.format(
                 sql, strip_comments=True, reindent=True, keyword_case="lower"
             ),

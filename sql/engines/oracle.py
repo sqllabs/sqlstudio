@@ -773,10 +773,8 @@ class OracleEngine(EngineBase):
                     result = ReviewResult(
                         id=line,
                         errlevel=2,
-                        stagestatus="驳回高危SQL",
-                        errormessage="禁止提交匹配"
-                        + critical_ddl_regex
-                        + "条件的语句！",
+                        stagestatus="Rejected critical SQL",
+                        errormessage=f"Submitting statements matching {critical_ddl_regex} is forbidden.",
                         sql=sqlitem.statement,
                     )
                 # 驳回未带where数据修改语句，如确实需做全部删除或更新，显示的带上where 1=1

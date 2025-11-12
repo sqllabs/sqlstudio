@@ -1164,7 +1164,11 @@ class MongoEngine(EngineBase):
                 columns.insert(0, "mongodballdata")
                 for ro in cursor:
                     json_col = json.dumps(
-                        ro, ensure_ascii=False, indent=2, separators=(",", ":")
+                        ro,
+                        ensure_ascii=False,
+                        indent=2,
+                        separators=(",", ":"),
+                        default=str,
                     )
                     row.insert(0, json_col)
                     for k, v in ro.items():
@@ -1185,7 +1189,15 @@ class MongoEngine(EngineBase):
             if isinstance(rows, list):
                 logger.debug(rows)
                 result_set.rows = tuple(
-                    [json.dumps(x, ensure_ascii=False, indent=2, separators=(",", ":"))]
+                    [
+                        json.dumps(
+                            x,
+                            ensure_ascii=False,
+                            indent=2,
+                            separators=(",", ":"),
+                            default=str,
+                        )
+                    ]
                     for x in rows
                 )
 

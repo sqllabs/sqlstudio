@@ -15,6 +15,11 @@ from sql.tests import User
 from sql.utils.workflow_audit import AuditV2
 
 
+def _get_test_db_name():
+    test_cfg = settings.DATABASES["default"].get("TEST", {})
+    return test_cfg.get("NAME") or settings.DATABASES["default"].get("NAME", "test")
+
+
 class TestQueryPrivilegesApply(TestCase):
     """测试权限列表、权限管理"""
 
@@ -31,7 +36,7 @@ class TestQueryPrivilegesApply(TestCase):
             user=settings.DATABASES["default"]["USER"],
             password=settings.DATABASES["default"]["PASSWORD"],
         )
-        self.db_name = settings.DATABASES["default"]["TEST"]["NAME"]
+        self.db_name = _get_test_db_name()
         self.sys_config = SysConfig()
         self.client = Client()
         tomorrow = datetime.today() + timedelta(days=1)
@@ -314,7 +319,7 @@ class TestQueryPrivilegesCheck(TestCase):
             user=settings.DATABASES["default"]["USER"],
             password=settings.DATABASES["default"]["PASSWORD"],
         )
-        self.db_name = settings.DATABASES["default"]["TEST"]["NAME"]
+        self.db_name = _get_test_db_name()
         self.sys_config = SysConfig()
         self.client = Client()
 
@@ -457,7 +462,7 @@ class TestQueryPrivilegesCheck(TestCase):
         r = sql.query_privileges._table_ref(
             "select * from sql_users limit 100;", self.slave, self.db_name
         )
-        self.assertListEqual(r, [{"schema": "test_archery", "name": "sql_users"}])
+        self.assertListEqual(r, [{"schema": self.db_name, "name": "sql_users"}])
 
     @patch("sql.engines.goinception.GoInceptionEngine.query_print")
     def test_table_ref_wrong(self, _query_print):

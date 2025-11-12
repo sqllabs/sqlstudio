@@ -9,6 +9,8 @@ from pymysql.converters import escape_string as pymysql_escape_string
 
 import schemaobject
 import sqlparse
+from sqlparse import tokens as T
+from sqlparse.sql import Identifier, IdentifierList, Function
 from MySQLdb.constants import FIELD_TYPE
 from schemaobject.connection import build_database_url
 
@@ -738,6 +740,13 @@ class MysqlEngine(EngineBase):
             statement = row.sql
             # Remove comments
             statement = remove_comments(statement, db_type="mysql")
+            dangerous_reason = self._find_dangerous_dml_issue(statement)
+            if dangerous_reason:
+                check_result.error_count += 1
+                row.stagestatus = "Rejected dangerous DML"
+                row.errlevel = 2
+                row.errormessage = dangerous_reason
+                continue
             # Determine syntax type
             syntax_type = get_syntax_type(statement, parser=False, db_type="mysql")
             # Block unsupported statements
@@ -761,6 +770,104 @@ class MysqlEngine(EngineBase):
                     row.errlevel = 2
                     row.errormessage = "DDL and DML statements cannot be mixed in one workflow!"
         return check_result
+
+    def _find_dangerous_dml_issue(self, statement: str):
+        if not statement:
+            return None
+        normalized = statement.lstrip().lower()
+        if normalized.startswith("update"):
+            if not self._has_where_clause(statement):
+                return "UPDATE statements must include a WHERE clause."
+            if self._where_clause_is_constant(statement):
+                return "UPDATE statements require a WHERE clause that references table columns."
+        elif normalized.startswith("delete"):
+            if not self._has_where_clause(statement):
+                return "DELETE statements must include a WHERE clause."
+            if self._where_clause_is_constant(statement):
+                return "DELETE statements require a WHERE clause that references table columns."
+        return None
+
+    def _has_where_clause(self, statement: str) -> bool:
+        where_token = self._extract_where_token(statement)
+        if where_token:
+            return True
+        normalized = statement.lower()
+        return " where" in normalized
+
+    def _where_clause_is_constant(self, statement: str) -> bool:
+        where_token = self._extract_where_token(statement)
+        if not where_token:
+            return False
+        meaningful_tokens = []
+        for token in where_token.flatten():
+            if token.is_whitespace:
+                continue
+            if token.ttype is T.Keyword and token.value.lower() == "where":
+                continue
+            meaningful_tokens.append(token)
+        if not meaningful_tokens:
+            return True
+        for token in meaningful_tokens:
+            if self._token_has_identifier(token):
+                return False
+        return True
+
+    def _extract_where_token(self, statement: str):
+        try:
+            parsed = sqlparse.parse(statement)
+        except Exception:
+            return None
+        for stmt in parsed:
+            for token in stmt.tokens:
+                if isinstance(token, sqlparse.sql.Where):
+                    return token
+                if token.is_group:
+                    for child in token.tokens:
+                        if isinstance(child, sqlparse.sql.Where):
+                            return child
+        return None
+
+    def _token_has_identifier(self, token) -> bool:
+        if isinstance(token, Function):
+            params = token.get_parameters()
+            if not params:
+                return False
+            return any(self._token_has_identifier(p) for p in params)
+        if isinstance(token, IdentifierList):
+            return any(self._token_has_identifier(t) for t in token.get_identifiers())
+        if isinstance(token, Identifier):
+            return True
+        constant_keywords = {"true", "false", "null"}
+        constant_functions = {
+            "now",
+            "current_timestamp",
+            "current_date",
+            "current_time",
+            "localtime",
+            "localtimestamp",
+            "sysdate",
+            "utc_timestamp",
+            "utc_time",
+            "utc_date",
+            "rand",
+            "uuid",
+        }
+        identifier_types = (
+            T.Name,
+            T.Name.Builtin,
+            T.Name.Placeholder,
+            T.Name.Other,
+        )
+        if token.ttype in identifier_types:
+            lowered = token.value.lower()
+            if lowered in constant_keywords or lowered in constant_functions:
+                return False
+            return True
+        if getattr(token, "is_group", False):
+            for child in token.tokens:
+                if self._token_has_identifier(child):
+                    return True
+        return False
 
     def execute_workflow(self, workflow):
         """执行上线单，返回Review set"""

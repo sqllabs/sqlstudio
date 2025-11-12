@@ -119,13 +119,13 @@ class TestMysql(TestCase):
         expected_result = [
             {
                 "ENGINE_KEYS": [
-                    {"key": "COLUMN_NAME", "value": "Column name"},
-                    {"key": "COLUMN_TYPE", "value": "Column type"},
-                    {"key": "COLUMN_DEFAULT", "value": "Default value"},
-                    {"key": "IS_NULLABLE", "value": "Nullable"},
-                    {"key": "EXTRA", "value": "Auto increment"},
-                    {"key": "COLUMN_KEY", "value": "Primary key"},
-                    {"key": "COLUMN_COMMENT", "value": "Comment"},
+                    {"key": "COLUMN_NAME", "value": "字段名"},
+                    {"key": "COLUMN_TYPE", "value": "数据类型"},
+                    {"key": "COLUMN_DEFAULT", "value": "默认值"},
+                    {"key": "IS_NULLABLE", "value": "允许非空"},
+                    {"key": "EXTRA", "value": "自动递增"},
+                    {"key": "COLUMN_KEY", "value": "是否主键"},
+                    {"key": "COLUMN_COMMENT", "value": "备注"},
                 ],
                 "TABLE_INFO": {"TABLE_SCHEMA": "test_db", "TABLE_NAME": "test_table"},
                 "COLUMNS": [
@@ -340,7 +340,7 @@ class TestMysql(TestCase):
         self.sys_config.set("goinception", "true")
         self.sys_config.set("critical_ddl_regex", "^|update")
         self.sys_config.get_all_config()
-        sql = "update user set id=1"
+        sql = "update user set id=1 where id=2"
         inc_row = ReviewResult(
             id=1,
             errlevel=0,
@@ -365,6 +365,161 @@ class TestMysql(TestCase):
         self.assertIsInstance(check_result, ReviewSet)
         self.assertEqual(check_result.rows[0].__dict__, row.__dict__)
 
+    @patch("sql.engines.mysql.GoInceptionEngine")
+    def test_execute_check_rejects_update_without_where(self, _inception_engine):
+        sql = "update users set status = 'inactive'"
+        inc_row = ReviewResult(
+            id=1,
+            errlevel=0,
+            stagestatus="Audit completed",
+            errormessage="None",
+            sql=sql,
+            affected_rows=0,
+            execute_time="",
+        )
+        _inception_engine.return_value.execute_check.return_value = ReviewSet(
+            full_sql=sql, rows=[inc_row]
+        )
+        new_engine = MysqlEngine(instance=self.ins1)
+        check_result = new_engine.execute_check(db_name="archery", sql=sql)
+        self.assertEqual(check_result.rows[0].stagestatus, "Rejected dangerous DML")
+        self.assertEqual(check_result.rows[0].errlevel, 2)
+        self.assertIn("WHERE clause", check_result.rows[0].errormessage)
+
+    @patch("sql.engines.mysql.GoInceptionEngine")
+    def test_execute_check_rejects_constant_where(self, _inception_engine):
+        sql = "delete from users where 1=1"
+        inc_row = ReviewResult(
+            id=1,
+            errlevel=0,
+            stagestatus="Audit completed",
+            errormessage="None",
+            sql=sql,
+            affected_rows=0,
+            execute_time="",
+        )
+        _inception_engine.return_value.execute_check.return_value = ReviewSet(
+            full_sql=sql, rows=[inc_row]
+        )
+        new_engine = MysqlEngine(instance=self.ins1)
+        check_result = new_engine.execute_check(db_name="archery", sql=sql)
+        self.assertEqual(check_result.rows[0].stagestatus, "Rejected dangerous DML")
+        self.assertEqual(check_result.rows[0].errlevel, 2)
+        self.assertIn("references table columns", check_result.rows[0].errormessage)
+
+    @patch("sql.engines.mysql.GoInceptionEngine")
+    def test_execute_check_rejects_where_true(self, _inception_engine):
+        sql = "delete from users where true"
+        inc_row = ReviewResult(
+            id=1,
+            errlevel=0,
+            stagestatus="Audit completed",
+            errormessage="None",
+            sql=sql,
+            affected_rows=0,
+            execute_time="",
+        )
+        _inception_engine.return_value.execute_check.return_value = ReviewSet(
+            full_sql=sql, rows=[inc_row]
+        )
+        new_engine = MysqlEngine(instance=self.ins1)
+        check_result = new_engine.execute_check(db_name="archery", sql=sql)
+        self.assertEqual(check_result.rows[0].stagestatus, "Rejected dangerous DML")
+
+    @patch("sql.engines.mysql.GoInceptionEngine")
+    def test_execute_check_rejects_where_number(self, _inception_engine):
+        sql = "delete from users where 1"
+        inc_row = ReviewResult(
+            id=1,
+            errlevel=0,
+            stagestatus="Audit completed",
+            errormessage="None",
+            sql=sql,
+            affected_rows=0,
+            execute_time="",
+        )
+        _inception_engine.return_value.execute_check.return_value = ReviewSet(
+            full_sql=sql, rows=[inc_row]
+        )
+        new_engine = MysqlEngine(instance=self.ins1)
+        check_result = new_engine.execute_check(db_name="archery", sql=sql)
+        self.assertEqual(check_result.rows[0].stagestatus, "Rejected dangerous DML")
+
+    @patch("sql.engines.mysql.GoInceptionEngine")
+    def test_execute_check_rejects_parenthesized_constant(self, _inception_engine):
+        sql = "update users set status='inactive' where (1=1)"
+        inc_row = ReviewResult(
+            id=1,
+            errlevel=0,
+            stagestatus="Audit completed",
+            errormessage="None",
+            sql=sql,
+            affected_rows=0,
+            execute_time="",
+        )
+        _inception_engine.return_value.execute_check.return_value = ReviewSet(
+            full_sql=sql, rows=[inc_row]
+        )
+        new_engine = MysqlEngine(instance=self.ins1)
+        check_result = new_engine.execute_check(db_name="archery", sql=sql)
+        self.assertEqual(check_result.rows[0].stagestatus, "Rejected dangerous DML")
+
+    @patch("sql.engines.mysql.GoInceptionEngine")
+    def test_execute_check_rejects_comparison_constant(self, _inception_engine):
+        sql = "update users set status='inactive' where 1<2"
+        inc_row = ReviewResult(
+            id=1,
+            errlevel=0,
+            stagestatus="Audit completed",
+            errormessage="None",
+            sql=sql,
+            affected_rows=0,
+            execute_time="",
+        )
+        _inception_engine.return_value.execute_check.return_value = ReviewSet(
+            full_sql=sql, rows=[inc_row]
+        )
+        new_engine = MysqlEngine(instance=self.ins1)
+        check_result = new_engine.execute_check(db_name="archery", sql=sql)
+        self.assertEqual(check_result.rows[0].stagestatus, "Rejected dangerous DML")
+
+    @patch("sql.engines.mysql.GoInceptionEngine")
+    def test_execute_check_rejects_function_without_columns(self, _inception_engine):
+        sql = "delete from users where now()"
+        inc_row = ReviewResult(
+            id=1,
+            errlevel=0,
+            stagestatus="Audit completed",
+            errormessage="None",
+            sql=sql,
+            affected_rows=0,
+            execute_time="",
+        )
+        _inception_engine.return_value.execute_check.return_value = ReviewSet(
+            full_sql=sql, rows=[inc_row]
+        )
+        new_engine = MysqlEngine(instance=self.ins1)
+        check_result = new_engine.execute_check(db_name="archery", sql=sql)
+        self.assertEqual(check_result.rows[0].stagestatus, "Rejected dangerous DML")
+
+    @patch("sql.engines.mysql.GoInceptionEngine")
+    def test_execute_check_allows_function_with_column(self, _inception_engine):
+        sql = "delete from users where date(created_at) > now()"
+        inc_row = ReviewResult(
+            id=1,
+            errlevel=0,
+            stagestatus="Audit completed",
+            errormessage="None",
+            sql=sql,
+            affected_rows=0,
+            execute_time="",
+        )
+        _inception_engine.return_value.execute_check.return_value = ReviewSet(
+            full_sql=sql, rows=[inc_row]
+        )
+        new_engine = MysqlEngine(instance=self.ins1)
+        check_result = new_engine.execute_check(db_name="archery", sql=sql)
+        self.assertEqual(check_result.rows[0].stagestatus, "Audit completed")
     @patch("sql.engines.mysql.GoInceptionEngine")
     def test_execute_check_critical_sql_partial_match(self, _inception_engine):
         self.sys_config.set("goinception", "true")

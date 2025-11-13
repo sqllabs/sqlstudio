@@ -1,8 +1,8 @@
 # -*- coding: UTF-8 -*-
 import django_q
-import pkg_resources
 import platform
 import sys
+from importlib import metadata
 import MySQLdb
 
 from common.config import SysConfig
@@ -169,9 +169,12 @@ def debug(request):
         backup_info = f"无法连接goInception备份库\n{e}"
 
     # PACKAGES
-    installed_packages = pkg_resources.working_set
     installed_packages_list = sorted(
-        ["%s==%s" % (i.key, i.version) for i in installed_packages]
+        [
+            f"{dist.metadata['Name']}=={dist.version}"
+            for dist in metadata.distributions()
+            if "Name" in dist.metadata
+        ]
     )
 
     # 敏感信息处理

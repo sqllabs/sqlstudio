@@ -1,11 +1,10 @@
 # -*- coding: UTF-8 -*-
 
-
-# Build paths inside the project like this: os.path.join(BASE_DIR, ...)
+# Build paths inside the project like this: BASE_DIR / "subdir"
 import os
-from typing import List
+import json
+from pathlib import Path
 from datetime import timedelta
-import environ
 import requests
 import logging
 
@@ -14,85 +13,82 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Fail-fast conversion helpers replace django-environ parsing so configuration errors
+# are caught during startup rather than at runtime.
 
-environ.Env.read_env(os.path.join(BASE_DIR, ".env"))
-env = environ.Env(
-    DEBUG=(bool, False),
-    ALLOWED_HOSTS=(list, ["*"]),
-    SECRET_KEY=(
-        str,
-        "",
-    ),  # 参考 https://docs.djangoproject.com/zh-hans/4.0/ref/settings/#secret-key
-    DATABASE_URL=(str, "mysql://root:@127.0.0.1:3306/archery"),
-    CACHE_URL=(str, "redis://127.0.0.1:6379/0"),
-    # 系统外部认证目前支持LDAP、OIDC、DINGDING三种，认证方式只能启用其中一种，如果启用多个，实际生效的只有一个，优先级LDAP > DINGDING > OIDC
-    ENABLE_LDAP=(bool, False),
-    ENABLE_OIDC=(bool, False),
-    ENABLE_DINGDING=(
-        bool,
-        False,
-    ),  # 钉钉认证方式参考文档：https://open.dingtalk.com/document/orgapp/tutorial-obtaining-user-personal-information
-    AUTH_LDAP_ALWAYS_UPDATE_USER=(bool, True),
-    AUTH_LDAP_USER_ATTR_MAP=(
-        dict,
-        {"username": "cn", "display": "displayname", "email": "mail"},
-    ),
-    Q_CLUISTER_SYNC=(bool, False),  # qcluster 同步模式, debug 时可以调整为 True
-    # CSRF_TRUSTED_ORIGINS=subdomain.example.com,subdomain.example2.com subdomain.example.com
-    CSRF_TRUSTED_ORIGINS=(list, []),
-    ENABLED_ENGINES=(
-        list,
-        [
-            "mysql",
-            "clickhouse",
-            "goinception",
-            "mssql",
-            "redis",
-            "pgsql",
-            "oracle",
-            "mongo",
-            "phoenix",
-            "odps",
-            "cassandra",
-            "doris",
-            "elasticsearch",
-            "opensearch",
-            "memcached",
-        ],
-    ),
-    ENABLED_NOTIFIERS=(
-        list,
-        [
-            "sql.notify:DingdingWebhookNotifier",
-            "sql.notify:DingdingPersonNotifier",
-            "sql.notify:FeishuWebhookNotifier",
-            "sql.notify:FeishuPersonNotifier",
-            "sql.notify:QywxWebhookNotifier",
-            "sql.notify:QywxToUserNotifier",
-            "sql.notify:MailNotifier",
-            "sql.notify:GenericWebhookNotifier",
-        ],
-    ),
-    CURRENT_AUDITOR=(str, "sql.utils.workflow_audit:AuditV2"),
-    PASSWORD_MIXIN_PATH=(str, "sql.plugins.password:DummyMixin"),
-)
+def get_str(key, default=None, *, required=False):
+    value = os.environ.get(key, default)
+    if required and not value:
+        raise ValueError(f"{key} is required but not set")
+    return value
+
+
+def get_bool(key, default=False):
+    value = os.environ.get(key)
+    if value is None:
+        return default
+    return value.strip().lower() in {"true", "1", "yes", "on"}
+
+
+def get_int(key, default=None):
+    value = os.environ.get(key)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        raise ValueError(f"{key} must be an integer")
+
+
+def get_list(key, default=None):
+    value = os.environ.get(key)
+    if not value:
+        return list(default) if default is not None else []
+    value = value.strip()
+    if value.startswith("["):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def get_dict(key, default=None):
+    value = os.environ.get(key)
+    if not value:
+        return dict(default) if default is not None else {}
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+    raise ValueError(f"{key} must be valid JSON representing a dict")
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = env("SECRET_KEY")
+SECRET_KEY = get_str(
+    "SECRET_KEY", default="CHANGE_ME_TO_A_LONG_RANDOM_SECRET_KEY_32_CHARS_MIN"
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = env("DEBUG")
+DEBUG = get_bool("DEBUG", default=False)
 
-ALLOWED_HOSTS = env("ALLOWED_HOSTS")
+ALLOWED_HOSTS = get_list("ALLOWED_HOSTS", default=["*"])
 
 # https://docs.djangoproject.com/en/4.0/ref/settings/#csrf-trusted-origins
-CSRF_TRUSTED_ORIGINS = env("CSRF_TRUSTED_ORIGINS")
+CSRF_TRUSTED_ORIGINS = get_list(
+    "CSRF_TRUSTED_ORIGINS", default=["https://mysqlstudio.example.com"]
+)
 
-# 解决nginx部署跳转404
+# Avoid nginx reverse-proxy redirect 404 issues
 USE_X_FORWARDED_HOST = True
 
-# 请求限制
+# Request size limit
 DATA_UPLOAD_MAX_MEMORY_SIZE = 15728640
 
 AVAILABLE_ENGINES = {
@@ -110,16 +106,45 @@ AVAILABLE_ENGINES = {
     "doris": {"path": "sql.engines.doris:DorisEngine"},
     "elasticsearch": {"path": "sql.engines.elasticsearch:ElasticsearchEngine"},
     "opensearch": {"path": "sql.engines.elasticsearch:OpenSearchEngine"},
-    "memcached": {"path": "sql.engines.memcached:MemcachedEngine"},
 }
 
-ENABLED_NOTIFIERS = env("ENABLED_NOTIFIERS")
+ENABLED_NOTIFIERS = get_list(
+    "ENABLED_NOTIFIERS",
+    default=[
+        "sql.notify:DingdingWebhookNotifier",
+        "sql.notify:DingdingPersonNotifier",
+        "sql.notify:FeishuWebhookNotifier",
+        "sql.notify:FeishuPersonNotifier",
+        "sql.notify:QywxWebhookNotifier",
+        "sql.notify:QywxToUserNotifier",
+        "sql.notify:MailNotifier",
+        "sql.notify:GenericWebhookNotifier",
+    ],
+)
 
-ENABLED_ENGINES = env("ENABLED_ENGINES")
+ENABLED_ENGINES = get_list(
+    "ENABLED_ENGINES",
+    default=[
+        "mysql",
+        "clickhouse",
+        "goinception",
+        "mssql",
+        "redis",
+        "pgsql",
+        "oracle",
+        "mongo",
+        "phoenix",
+        "odps",
+        "cassandra",
+        "doris",
+        "elasticsearch",
+        "opensearch",
+    ],
+)
 
-CURRENT_AUDITOR = env("CURRENT_AUDITOR")
+CURRENT_AUDITOR = get_str("CURRENT_AUDITOR", default="sql.utils.workflow_audit:AuditV2")
 
-PASSWORD_MIXIN_PATH = env("PASSWORD_MIXIN_PATH")
+PASSWORD_MIXIN_PATH = get_str("PASSWORD_MIXIN_PATH", default="sql.plugins.password:DummyMixin")
 
 # Application definition
 INSTALLED_APPS = (
@@ -139,13 +164,13 @@ INSTALLED_APPS = (
 )
 
 MIDDLEWARE = (
+    "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "django.middleware.security.SecurityMiddleware",
     "django.middleware.gzip.GZipMiddleware",
     "common.middleware.check_login_middleware.CheckLoginMiddleware",
     "common.middleware.exception_logging_middleware.ExceptionLoggingMiddleware",
@@ -156,7 +181,7 @@ ROOT_URLCONF = "archery.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [os.path.join(BASE_DIR, "common/templates")],
+        "DIRS": [BASE_DIR / "common" / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -175,29 +200,32 @@ WSGI_APPLICATION = "archery.wsgi.application"
 # Internationalization
 LANGUAGE_CODE = "zh-hans"
 
-TIME_ZONE = "Asia/Shanghai"
+TIME_ZONE = "UTC"
 
 USE_I18N = True
 
 USE_TZ = False
 
-# 时间格式化
-USE_L10N = False
+# Date/time formatting
 DATETIME_FORMAT = "Y-m-d H:i:s"
 DATE_FORMAT = "Y-m-d"
 
 # Static files (CSS, JavaScript, Images)
 STATIC_URL = "/static/"
-STATIC_ROOT = os.path.join(BASE_DIR, "static")
+STATIC_ROOT = BASE_DIR / "static"
 STATICFILES_DIRS = [
-    os.path.join(BASE_DIR, "common/static"),
+    BASE_DIR / "common" / "static",
 ]
-STATICFILES_STORAGE = "common.storage.ForgivingManifestStaticFilesStorage"
+STORAGES = {
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.ManifestStaticFilesStorage",
+    }
+}
 
-# 扩展django admin里users字段用到，指定了sql/models.py里的class users
+# Extend Django admin to use the custom user model defined in sql/models.py
 AUTH_USER_MODEL = "sql.Users"
 
-# 密码校验
+# Password validators
 AUTH_PASSWORD_VALIDATORS = [
     {
         "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
@@ -216,75 +244,75 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-############### 以下部分需要用户根据自己环境自行修改 ###################
+############### Update the following settings to match your environment ###############
 
-# SESSION 设置
-SESSION_COOKIE_AGE = 60 * 300  # 300分钟
+# Session configuration
+SESSION_COOKIE_AGE = 60 * 300  # 300 minutes
 SESSION_SAVE_EVERY_REQUEST = True
-SESSION_EXPIRE_AT_BROWSER_CLOSE = True  # 关闭浏览器，则COOKIE失效
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True  # Expire cookies when the browser closes
 
-# 该项目本身的mysql数据库地址
+# Primary MySQL connection used by this project
 DATABASES = {
     "default": {
-        **env.db(),
-        **{
-            "DEFAULT_CHARSET": "utf8mb4",
-            "CONN_MAX_AGE": 50,
-            "OPTIONS": {
-                "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
-                "charset": "utf8mb4",
-            },
-            "TEST": {
-                "NAME": "test_archery",
-                "CHARSET": "utf8mb4",
-            },
-        },
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': 'mysqlstudio',
+        'USER': 'mysqlstudio',
+        'PASSWORD': '******',
+        'HOST': '127.0.0.1',
+        'PORT': '3306',
     }
 }
 
 # Django-Q
 Q_CLUSTER = {
-    "name": "archery",
-    "workers": env("Q_CLUISTER_WORKERS", default=4),
+    "name": "MySQL Studio",
+    "workers": get_int("Q_CLUISTER_WORKERS", default=4),
     "recycle": 500,
-    "timeout": env("Q_CLUISTER_TIMEOUT", default=60),
+    "timeout": get_int("Q_CLUISTER_TIMEOUT", default=60),
     "compress": True,
     "cpu_affinity": 1,
     "save_limit": 0,
     "queue_limit": 50,
     "label": "Django Q",
     "django_redis": "default",
-    "sync": env("Q_CLUISTER_SYNC"),  # 本地调试可以修改为True，使用同步模式
+    "sync": get_bool("Q_CLUISTER_SYNC", default=False),  # Set True during local debugging to run in sync mode
 }
 
-# 缓存配置
+# Cache configuration
 CACHES = {
-    "default": env.cache(),
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": "redis://127.0.0.1:6379/13",
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            "PASSWORD": "******"
+        }
+    }
 }
 
 # https://docs.djangoproject.com/en/3.2/ref/settings/#std-setting-DEFAULT_AUTO_FIELD
-DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # API Framework
 REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_RENDERER_CLASSES": ("rest_framework.renderers.JSONRenderer",),
-    # 鉴权
+    # Authentication
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ),
-    # 权限
+    # Permissions
     "DEFAULT_PERMISSION_CLASSES": ("sql_api.permissions.IsInUserWhitelist",),
-    # 限速（anon：未认证用户  user：认证用户）
+    # Rate limits (anon = unauthenticated, user = authenticated)
     "DEFAULT_THROTTLE_CLASSES": (
         "rest_framework.throttling.AnonRateThrottle",
         "rest_framework.throttling.UserRateThrottle",
     ),
     "DEFAULT_THROTTLE_RATES": {"anon": "120/min", "user": "600/min"},
-    # 过滤
+    # Filtering
     "DEFAULT_FILTER_BACKENDS": ("django_filters.rest_framework.DjangoFilterBackend",),
-    # 分页
+    # Pagination
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 5,
 }
@@ -315,7 +343,7 @@ SIMPLE_JWT = {
 }
 
 # OIDC
-ENABLE_OIDC = env("ENABLE_OIDC", False)
+ENABLE_OIDC = get_bool("ENABLE_OIDC", default=False)
 if ENABLE_OIDC:
     INSTALLED_APPS += ("mozilla_django_oidc",)
     AUTHENTICATION_BACKENDS = (
@@ -323,11 +351,11 @@ if ENABLE_OIDC:
         "django.contrib.auth.backends.ModelBackend",
     )
 
-    OIDC_RP_WELLKNOWN_URL = env(
-        "OIDC_RP_WELLKNOWN_URL"
-    )  # 例如 https://keycloak.example.com/realms/<your realm>/.well-known/openid-configuration
-    OIDC_RP_CLIENT_ID = env("OIDC_RP_CLIENT_ID")
-    OIDC_RP_CLIENT_SECRET = env("OIDC_RP_CLIENT_SECRET")
+    OIDC_RP_WELLKNOWN_URL = get_str(
+        "OIDC_RP_WELLKNOWN_URL", required=True
+    )  # e.g. https://keycloak.example.com/realms/<realm>/.well-known/openid-configuration
+    OIDC_RP_CLIENT_ID = get_str("OIDC_RP_CLIENT_ID", required=True)
+    OIDC_RP_CLIENT_SECRET = get_str("OIDC_RP_CLIENT_SECRET", required=True)
 
     response = requests.get(OIDC_RP_WELLKNOWN_URL)
     response.raise_for_status()
@@ -338,60 +366,65 @@ if ENABLE_OIDC:
     OIDC_OP_JWKS_ENDPOINT = config["jwks_uri"]
     OIDC_OP_LOGOUT_ENDPOINT = config["end_session_endpoint"]
 
-    OIDC_RP_SCOPES = env("OIDC_RP_SCOPES", default="openid profile email")
-    OIDC_RP_SIGN_ALGO = env("OIDC_RP_SIGN_ALGO", default="RS256")
+    OIDC_RP_SCOPES = get_str("OIDC_RP_SCOPES", default="openid profile email")
+    OIDC_RP_SIGN_ALGO = get_str("OIDC_RP_SIGN_ALGO", default="RS256")
 
     LOGIN_REDIRECT_URL = "/"
 
 # Dingding
-ENABLE_DINGDING = env("ENABLE_DINGDING", False)
+ENABLE_DINGDING = get_bool("ENABLE_DINGDING", default=False)
 if ENABLE_DINGDING:
     INSTALLED_APPS += ("django_auth_dingding",)
     AUTHENTICATION_BACKENDS = (
         "common.authenticate.dingding_auth.DingdingAuthenticationBackend",
         "django.contrib.auth.backends.ModelBackend",
     )
-    AUTH_DINGDING_AUTHENTICATION_CALLBACK_URL = env(
-        "AUTH_DINGDING_AUTHENTICATION_CALLBACK_URL"
+    AUTH_DINGDING_AUTHENTICATION_CALLBACK_URL = get_str(
+        "AUTH_DINGDING_AUTHENTICATION_CALLBACK_URL", required=True
     )
-    AUTH_DINGDING_APP_KEY = env("AUTH_DINGDING_APP_KEY")
-    AUTH_DINGDING_APP_SECRET = env("AUTH_DINGDING_APP_SECRET")
+    AUTH_DINGDING_APP_KEY = get_str("AUTH_DINGDING_APP_KEY", required=True)
+    AUTH_DINGDING_APP_SECRET = get_str("AUTH_DINGDING_APP_SECRET", required=True)
 
 # LDAP
-ENABLE_LDAP = env("ENABLE_LDAP", False)
+ENABLE_LDAP = get_bool("ENABLE_LDAP", default=False)
 if ENABLE_LDAP:
     import ldap
     from django_auth_ldap.config import LDAPSearch
 
     AUTHENTICATION_BACKENDS = (
-        "django_auth_ldap.backend.LDAPBackend",  # 配置为先使用LDAP认证，如通过认证则不再使用后面的认证方式
-        "django.contrib.auth.backends.ModelBackend",  # django系统中手动创建的用户也可使用，优先级靠后。注意这2行的顺序
+        "django_auth_ldap.backend.LDAPBackend",  # Try LDAP first; stop if it succeeds
+        "django.contrib.auth.backends.ModelBackend",  # Fallback to local users (order matters)
     )
 
-    AUTH_LDAP_SERVER_URI = env("AUTH_LDAP_SERVER_URI", default="ldap://xxx")
-    AUTH_LDAP_USER_DN_TEMPLATE = env("AUTH_LDAP_USER_DN_TEMPLATE", default=None)
+    AUTH_LDAP_SERVER_URI = get_str("AUTH_LDAP_SERVER_URI", default="ldap://xxx")
+    AUTH_LDAP_USER_DN_TEMPLATE = get_str("AUTH_LDAP_USER_DN_TEMPLATE", None)
     if not AUTH_LDAP_USER_DN_TEMPLATE:
         del AUTH_LDAP_USER_DN_TEMPLATE
-        AUTH_LDAP_BIND_DN = env(
+        AUTH_LDAP_BIND_DN = get_str(
             "AUTH_LDAP_BIND_DN", default="cn=xxx,ou=xxx,dc=xxx,dc=xxx"
         )
-        AUTH_LDAP_BIND_PASSWORD = env("AUTH_LDAP_BIND_PASSWORD", default="***********")
-        AUTH_LDAP_USER_SEARCH_BASE = env(
+        AUTH_LDAP_BIND_PASSWORD = get_str(
+            "AUTH_LDAP_BIND_PASSWORD", default="***********"
+        )
+        AUTH_LDAP_USER_SEARCH_BASE = get_str(
             "AUTH_LDAP_USER_SEARCH_BASE", default="ou=xxx,dc=xxx,dc=xxx"
         )
-        AUTH_LDAP_USER_SEARCH_FILTER = env(
+        AUTH_LDAP_USER_SEARCH_FILTER = get_str(
             "AUTH_LDAP_USER_SEARCH_FILTER", default="(cn=%(user)s)"
         )
         AUTH_LDAP_USER_SEARCH = LDAPSearch(
             AUTH_LDAP_USER_SEARCH_BASE, ldap.SCOPE_SUBTREE, AUTH_LDAP_USER_SEARCH_FILTER
         )
-    AUTH_LDAP_ALWAYS_UPDATE_USER = env(
+    AUTH_LDAP_ALWAYS_UPDATE_USER = get_bool(
         "AUTH_LDAP_ALWAYS_UPDATE_USER", default=True
-    )  # 每次登录从ldap同步用户信息
-    AUTH_LDAP_USER_ATTR_MAP = env("AUTH_LDAP_USER_ATTR_MAP")
+    )  # Sync user info from LDAP on every login
+    AUTH_LDAP_USER_ATTR_MAP = get_dict(
+        "AUTH_LDAP_USER_ATTR_MAP",
+        default={"username": "cn", "display": "displayname", "email": "mail"},
+    )
 
-# CAS认证
-ENABLE_CAS = env("ENABLE_CAS", default=False)
+# CAS authentication
+ENABLE_CAS = get_bool("ENABLE_CAS", default=False)
 if ENABLE_CAS:
     INSTALLED_APPS += ("django_cas_ng",)
     MIDDLEWARE += ("django_cas_ng.middleware.CASMiddleware",)
@@ -400,20 +433,24 @@ if ENABLE_CAS:
         "django_cas_ng.backends.CASBackend",
     )
 
-    # CAS 的地址
-    CAS_SERVER_URL = env("CAS_SERVER_URL")
-    # CAS 版本
-    CAS_VERSION = env("CAS_VERSION")
-    # 存入所有 CAS 服务端返回的 User 数据。
+    # CAS server URL
+    CAS_SERVER_URL = get_str("CAS_SERVER_URL", required=True)
+    # CAS protocol version
+    CAS_VERSION = get_str("CAS_VERSION", required=True)
+    # Persist all user attributes returned by CAS
     CAS_APPLY_ATTRIBUTES_TO_USER = True
-    # 关闭浏览器退出登录
+    # End the session when the browser closes
     SESSION_EXPIRE_AT_BROWSER_CLOSE = True
-    #  忽略  SSL  证书校验
-    CAS_VERIFY_SSL_CERTIFICATE = env("CAS_VERIFY_SSL_CERTIFICATE", default=False)
-    #  忽略来源验证
+    # Optionally skip SSL certificate validation
+    CAS_VERIFY_SSL_CERTIFICATE = get_bool(
+        "CAS_VERIFY_SSL_CERTIFICATE", default=False
+    )
+    # Ignore referer validation
     CAS_IGNORE_REFERER = True
-    # https请求问题
-    CAS_FORCE_SSL_SERVICE_URL = env("CAS_FORCE_SSL_SERVICE_URL", default=False)
+    # Handle HTTPS callback issues
+    CAS_FORCE_SSL_SERVICE_URL = get_bool(
+        "CAS_FORCE_SSL_SERVICE_URL", default=False
+    )
     CAS_RETRY_TIMEOUT = 1
     CAS_RETRY_LOGIN = True
     CAS_EXTRA_LOGIN_PARAMS = {"renew": True}
@@ -425,7 +462,7 @@ SUPPORTED_AUTHENTICATION = [
     ("OIDC", ENABLE_OIDC),
     ("CAS", ENABLE_CAS),
 ]
-# 计算当前启用的外部认证方式数量
+# Count enabled external authentication methods
 ENABLE_AUTHENTICATION_COUNT = len(
     [enabled for (name, enabled) in SUPPORTED_AUTHENTICATION if enabled]
 )
@@ -434,7 +471,7 @@ if ENABLE_AUTHENTICATION_COUNT > 0:
         logger.warning(
             "系统外部认证目前支持LDAP、DINGDING、OIDC、CAS四种，认证方式只能启用其中一种，如果启用多个，实际生效的只有一个，优先级LDAP > DINGDING > OIDC > CAS"
         )
-    authentication = ""  # 默认为空
+    authentication = ""  # Default to empty
     for name, enabled in SUPPORTED_AUTHENTICATION:
         if enabled:
             authentication = name
@@ -442,7 +479,7 @@ if ENABLE_AUTHENTICATION_COUNT > 0:
     logger.info("当前生效的外部认证方式：" + authentication)
     logger.info("认证后端：" + AUTHENTICATION_BACKENDS.__str__())
 
-# LOG配置
+# Logging configuration
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -455,17 +492,17 @@ LOGGING = {
         "default": {
             "level": "DEBUG",
             "class": "logging.handlers.RotatingFileHandler",
-            "filename": "logs/archery.log",
-            "maxBytes": 1024 * 1024 * 100,  # 5 MB
-            "backupCount": 5,
+            "filename": str(BASE_DIR / "logs" / "mysqlstudio.log"),
+            "maxBytes": 1024 * 1024 * 100,  # 100 MB
+            "backupCount": 180,
             "formatter": "verbose",
         },
         "django-q": {
             "level": "DEBUG",
             "class": "logging.handlers.RotatingFileHandler",
-            "filename": "logs/qcluster.log",
-            "maxBytes": 1024 * 1024 * 100,  # 5 MB
-            "backupCount": 5,
+            "filename": str(BASE_DIR / "logs" / "qcluster.log"),
+            "maxBytes": 1024 * 1024 * 100,  # 100 MB
+            "backupCount": 180,
             "formatter": "verbose",
         },
         "console": {
@@ -475,48 +512,47 @@ LOGGING = {
         },
     },
     "loggers": {
-        "default": {  # default日志
+        "default": {  # Default logger
             "handlers": ["console", "default"],
-            "level": "WARNING",
+            "level": "DEBUG",
         },
-        "django-q": {  # django_q模块相关日志
+        "django-q": {  # django-q module logs
             "handlers": ["console", "django-q"],
-            "level": "WARNING",
+            "level": "DEBUG",
             "propagate": False,
         },
-        "django_auth_ldap": {  # django_auth_ldap模块相关日志
+        "django_auth_ldap": {  # django-auth-ldap module logs
             "handlers": ["console", "default"],
-            "level": "WARNING",
+            "level": "DEBUG",
             "propagate": False,
         },
         "mozilla_django_oidc": {
             "handlers": ["console", "default"],
-            "level": "WARNING",
+            "level": "DEBUG",
             "propagate": False,
         },
-        # 'django.db': {  # 打印SQL语句，方便开发
-        #     'handlers': ['console', 'default'],
-        #     'level': 'DEBUG',
-        #     'propagate': False
-        # },
-        # 'django.request': {  # 打印请求错误堆栈信息，方便开发
-        #     'handlers': ['console', 'default'],
-        #     'level': 'DEBUG',
-        #     'propagate': False
-        # },
+        'django.db': {  # Print SQL statements to aid debugging
+            'handlers': ['console', 'default'],
+            'level': 'DEBUG',
+            'propagate': False
+        },
+        'django.request': {  # Log request stack traces for easier debugging
+            'handlers': ['console', 'default'],
+            'level': 'DEBUG',
+            'propagate': False
+        },
     },
 }
 
-# 在网站标题及登录页面追加此内容, 可用于多archery实例的区分。Archery后台也有相同配置，如都做了配置，以后台配置为准
-CUSTOM_TITLE_SUFFIX = env("CUSTOM_TITLE_SUFFIX", default="")
+# Optional suffix shown in the site title and login page to distinguish deployments.
+# If also configured in the MySQL Studio backend UI, the backend setting takes precedence.
+CUSTOM_TITLE_SUFFIX = get_str("CUSTOM_TITLE_SUFFIX", default="")
 
-MEDIA_ROOT = os.path.join(BASE_DIR, "media")
-if not os.path.exists(MEDIA_ROOT):
-    os.mkdir(MEDIA_ROOT)
+MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
 
-PKEY_ROOT = os.path.join(MEDIA_ROOT, "keys")
-if not os.path.exists(PKEY_ROOT):
-    os.mkdir(PKEY_ROOT)
+PKEY_ROOT = MEDIA_ROOT / "keys"
+PKEY_ROOT.mkdir(parents=True, exist_ok=True)
 
 try:
     from local_settings import *

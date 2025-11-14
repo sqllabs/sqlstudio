@@ -35,7 +35,6 @@ drf-spectacular==0.*
 pyotp==2.*
 pillow==12.*
 qrcode==8.*
-django-environ==0.*
 alibabacloud_dysmsapi20170525==4.*
 tencentcloud-sdk-python==3.*
 mozilla-django-oidc==4.*

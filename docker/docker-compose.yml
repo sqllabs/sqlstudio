@@ -1,0 +1,173 @@
+name: mysqlstudio
+
+services:
+  mysqlstudio-1.13.1-mysql:
+    image: mysqlstudio:1.13.1
+    container_name: mysqlstudio-1.13.1-mysql
+    networks:
+      oss:
+        ipv4_address: 172.18.0.31
+    volumes:
+      - /data/mysql/mysqlstudio_conf:/etc/mysql
+      - /data/mysql/mysqlstudio_data:/var/lib/mysql
+      - /data/mysql/mysqlstudio_log:/var/log/mysql
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    restart: always
+    user: mysql
+    working_dir: /var/lib/mysql/
+    command: ["/usr/sbin/mysqld"]
+    environment:
+      MYSQLD_PARENT_PID: 1
+    logging:
+      driver: "syslog"
+      options:
+        syslog-address: "tcp://127.0.0.1:514"
+        tag: "mysqlstudio-mysql-172.18.0.31"
+  mysqlstudio-1.13.1-redis:
+    image: mysqlstudio:1.13.1
+    container_name: mysqlstudio-1.13.1-redis
+    networks:
+      oss:
+        ipv4_address: 172.18.0.32
+    volumes:
+       - /data/redis/mysqlstudio_conf:/etc/redis
+       - /data/redis/mysqlstudio_data:/var/lib/redis
+       - /data/redis/mysqlstudio_log:/var/log/redis
+    deploy:
+      resources:
+        limits:
+          memory: 8M
+        reservations:
+          memory: 6M
+    restart: always
+    user: redis
+    working_dir: /var/lib/redis/
+    command: ["/usr/bin/redis-server", "/etc/redis/redis.conf", "--supervised", "no", "--daemonize", "no"]
+    logging:
+      driver: "syslog"
+      options:
+        syslog-address: "tcp://127.0.0.1:514"
+        tag: "mysqlstudio-redis-172.18.0.32"
+  mysqlstudio-1.13.1-server:
+    image: mysqlstudio:1.13.1
+    container_name: mysqlstudio-1.13.1-server
+    depends_on:
+      - mysqlstudio-1.13.1-mysql
+      - mysqlstudio-1.13.1-redis
+      - mysqlstudio-1.13.1-mysqlaudit
+    networks:
+      oss:
+        ipv4_address: 172.18.0.33
+    volumes:
+      - /data/mysqlstudio/archery/settings.py:/data/mysqlstudio/archery/settings.py
+      - /data/mysqlstudio/logs:/data/mysqlstudio/logs
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    restart: always
+    user: nginx
+    working_dir: /data/mysqlstudio/
+    command: ["/usr/local/bin/gunicorn", "--workers", "4", "--bind", "0.0.0.0:9123", "--timeout", "600", "archery.wsgi:application"]
+    logging:
+      driver: "syslog"
+      options:
+        syslog-address: "tcp://127.0.0.1:514"
+        tag: "mysqlstudio-server-172.18.0.33"
+  mysqlstudio-1.13.1-qcluster:
+    image: mysqlstudio:1.13.1
+    container_name: mysqlstudio-1.13.1-qcluster
+    depends_on:
+      - mysqlstudio-1.13.1-server
+    networks:
+      oss:
+        ipv4_address: 172.18.0.34
+    volumes:
+      - /data/mysqlstudio/archery/settings.py:/data/mysqlstudio/archery/settings.py
+      - /data/mysqlstudio/logs:/data/mysqlstudio/logs
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    restart: always
+    user: nginx
+    working_dir: /data/mysqlstudio/
+    command: ["/usr/bin/python3.13", "manage.py", "qcluster"]
+    logging:
+      driver: "syslog"
+      options:
+        syslog-address: "tcp://127.0.0.1:514"
+        tag: "mysqlstudio-qcluster-172.18.0.34"
+  mysqlstudio-1.13.1-mysqlaudit:
+    image: mysqlstudio:1.13.1
+    container_name: mysqlstudio-1.13.1-mysqlaudit
+    depends_on:
+      - mysqlstudio-1.13.1-mysql
+    networks:
+      oss:
+        ipv4_address: 172.18.0.35
+    volumes:
+      - /data/mysqlaudit/config/config.toml:/data/mysqlaudit/config/config.toml
+      - /data/mysqlaudit/tidb:/data/mysqlaudit/tidb
+      - /data/mysqlaudit/logs:/data/mysqlaudit/logs
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+        reservations:
+          memory: 32M
+    restart: always
+    user: nginx
+    working_dir: /data/mysqlaudit/
+    command: ["/data/mysqlaudit/mysqlaudit", "-config=/data/mysqlaudit/config/config.toml"]
+    logging:
+      driver: "syslog"
+      options:
+        syslog-address: "tcp://127.0.0.1:514"
+        tag: "mysqlstudio-mysqlaudit-172.18.0.35"
+  mysqlstudio-1.13.1-openresty:
+    image: mysqlstudio:1.13.1
+    profiles: ["mysqlstudio-1.13.1-openresty"]
+    container_name: mysqlstudio-1.13.1-openresty
+    networks:
+      oss:
+        ipv4_address: 172.18.0.36
+    tmpfs:
+      - /usr/local/openresty/nginx/client_body_temp:exec,nosuid,nodev,size=100m
+      - /usr/local/openresty/nginx/fastcgi_temp:exec,nosuid,nodev,size=100m
+      - /usr/local/openresty/nginx/proxy_temp:exec,nosuid,nodev,size=100m
+      - /usr/local/openresty/nginx/scgi_temp:exec,nosuid,nodev,size=100m
+      - /usr/local/openresty/nginx/uwsgi_temp:exec,nosuid,nodev,size=100m
+    volumes:
+      - /data/nginx/mysqlstudio_conf/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf
+      - /data/nginx/mysqlstudio_conf.d/mysqlstudio.http.conf:/usr/local/openresty/nginx/conf.d/mysqlstudio.http.conf
+      - /data/nginx/mysqlstudio_logs:/usr/local/openresty/nginx/logs
+      - /data/mysqlstudio/static:/data/mysqlstudio/static
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    restart: always
+    user: root
+    working_dir: /root/
+    command: ["/usr/local/openresty/nginx/sbin/nginx", "-g", "daemon off;", "-c", "/usr/local/openresty/nginx/conf/nginx.conf"]
+    logging:
+      driver: "syslog"
+      options:
+        syslog-address: "tcp://127.0.0.1:514"
+        tag: "mysqlstudio-openresty-172.18.0.36"
+
+networks:
+  oss:
+    external: true

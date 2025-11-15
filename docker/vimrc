@@ -1,0 +1,14 @@
+" Basic settings
+set cursorline
+syntax on
+set tabstop=4
+set shiftwidth=4
+set expandtab
+set softtabstop=4
+set smarttab
+set laststatus=2
+set statusline=path:%F\ \ \ \ %0(X:%l\ \ \ \ Y:%c\ \ \ \ L:%L%)
+set encoding=utf-8
+set fileencoding=utf-8
+set fileencodings=utf-8,utf8mb4,latin1
+set termencoding=utf-8

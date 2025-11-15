@@ -2,7 +2,9 @@
 
 ## Overview
 
-MySQL Studio is the web front end for MySQL Audit.
+MySQL Studio is a database operations platform focused exclusively on
+MySQL, MariaDB, and Percona Server for MySQL, delivering streamlined
+workflows and tooling for day-to-day administration.
 
 ## Roadmap
 
@@ -15,6 +17,20 @@ as it becomes available.
 
 - Join our Telegram group to discuss SQL Labs projects, ask questions, and share feedback: https://t.me/sqllabs
 - Subscribe to the Telegram channel for broadcast announcements and release news: https://t.me/sqllabschannel
+
+## Environment
+
+- Python 3.13
+- Django 5.2.x LTS
+- MySQL 8.4.x LTS
+- Ubuntu 24.04.x LTS
+- Redis
+- Docker
+- OpenResty
+
+## Quick Start
+
+See `docker/README.md` for installation instructions.
 
 ## License
 
